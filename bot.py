@@ -1,5 +1,6 @@
 #!/usr/bin/python
 
+from unicodedata import category
 import datetime
 import twitter
 import keys
@@ -85,14 +86,19 @@ def mutate_song(artist, title):
   parts = mutate_and_pick_random(original_parts, mutate_string)
   return parts
 
+def strip_punctuation(s):
+  return ''.join(ch for ch in s if category(ch)[0] != 'P')
+
 def make_meme(string, top, bottom):
   bing = bing_search_api.BingSearchAPI(keys.bing_search_key)
   params = {'$format': 'json'}
-  resp = bing.search('image', string,  params).json()
+  resp = bing.search('image', strip_punctuation(string),  params).json()
 
-  resp = [r for r in resp if int(r['Height']) > 300 and int(r['Width'] > 400)]
   # print json.dumps(resp, sort_keys = True, indent = 2)
-  url = resp['d']['results'][0]['Image'][0]['MediaUrl']
+  images = [resp['d']['results'][0]['Image'][0] for i in resp]
+  print images[0]
+  images = [i for i in images if int(i['Height']) > 300 and int(i['Width'] > 400)]
+  url = images[0]['MediaUrl']
 
   response = requests.get(url)
   img = Image.open(StringIO(response.content))
@@ -123,7 +129,6 @@ class PostTemplate:
       return True
 
   def format(self, song, chart):
-    print self.template
     return self.template % {
       'title': song.title,
       'artist': song.artist,
@@ -211,10 +216,10 @@ def process_song(song, chart_name):
   if args.no_image:
     img_bytes = None
   else:
-    img_bytes = make_meme(orig, post, '')
+    img_bytes = make_meme(orig, new_artist, new_title)
   post = make_post_text(new_song, chart_name)
   if not args.dry_run:
-    post_to_twitter(post, image_bytes)
+    post_to_twitter(post, img_bytes)
     save_to_db(song.artist, song.title)
 
 def filter_chart(chart):
