@@ -4,3 +4,4 @@ pronouncing
 sqlite3
 Pillow
 peewee
+inflect

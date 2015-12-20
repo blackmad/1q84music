@@ -13,7 +13,7 @@ from PIL import ImageDraw
 from PIL import ImageFont
 
 
-def draw_caption(img, text, top=False):
+def draw_caption(img, text, top=False, padding=10):
 	draw = ImageDraw.Draw(img)
 	#Find a suitable font size to fill the entire width:
 	w = img.size[0]
@@ -23,11 +23,23 @@ def draw_caption(img, text, top=False):
 		w, h = draw.textsize(text, font=font)
 		s -= 1
 		if s <= 12: break
+
 	#Draw the text multiple times in black to get the outline:
 	for x in xrange(-3, 4):
 		for y in xrange(-3, 4):
-			draw_y = y if top else img.size[1] - h + y
+			draw_y = y + padding if top else img.size[1] - h + y - padding
 			draw.text((10 + x, draw_y), text, font=font, fill='black')
 	#Draw the text once more in white:
-	draw_y = 0 if top else img.size[1] - h
+	draw_y = 0 + padding if top else img.size[1] - h - padding
 	draw.text((10, draw_y), text, font=font, fill='white')
+
+import sys
+def main():
+  img = Image.open(open(sys.argv[1]))
+  draw_caption(img, sys.argv[2], top=True, padding=3)
+  draw_caption(img, sys.argv[3], top=False, padding=20)
+  img.show()
+
+if __name__ == "__main__":
+  main()
+  

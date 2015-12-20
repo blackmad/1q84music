@@ -17,12 +17,18 @@ import requests
 from StringIO import StringIO
 import peewee
 import argparse
+import json
+import inflect
 
 # TODO
+# - handle when nothing change
 # - make the tweets more interesting
+# - maybe use the new song title if mutated for the image
+# - make sure we have a big enough image
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--dry_run', action='store_true')
+parser.add_argument('--no_image', action='store_true')
 args = parser.parse_args()
 
 sqlite_db = peewee.SqliteDatabase('1q84_posts.db')
@@ -75,19 +81,23 @@ def mutate_string(string):
     return None
   
 def mutate_song(artist, title):
-  str = '%s - %s' % (artist, title)
-  new_str = mutate_string(str)
-  return new_str
+  original_parts = [artist, title] 
+  parts = mutate_and_pick_random(original_parts, mutate_string)
+  return parts
 
 def make_meme(string, top, bottom):
   bing = bing_search_api.BingSearchAPI(keys.bing_search_key)
   params = {'$format': 'json'}
   resp = bing.search('image', string,  params).json()
+
+  resp = [r for r in resp if int(r['Height']) > 300 and int(r['Width'] > 400)]
+  # print json.dumps(resp, sort_keys = True, indent = 2)
   url = resp['d']['results'][0]['Image'][0]['MediaUrl']
 
   response = requests.get(url)
   img = Image.open(StringIO(response.content))
-  meme.draw_caption(img, top, bottom)
+  meme.draw_caption(img, top, top=True, padding=-3)
+  meme.draw_caption(img, bottom, top=False, padding=20)
 
   #output = tempfile.mkstemp(suffix='.jpg')
   #img.save(output[1])
@@ -100,6 +110,63 @@ def make_meme(string, top, bottom):
       img.save(output, 'JPEG')
       return output.getvalue()
 
+inflect_engine = inflect.engine()
+class PostTemplate:
+  def __init__(self, template, matcher=None):
+    self.template = template
+    self.matcher = matcher
+ 
+  def matches(self, song):
+    if self.matcher:
+      return self.matcher(song)
+    else:
+      return True
+
+  def format(self, song, chart):
+    print self.template
+    return self.template % {
+      'title': song.title,
+      'artist': song.artist,
+      'rank': song.rank,
+      'rank_ordinal': inflect_engine.ordinal(song.rank),
+      'weeks': song.weeks,
+      'weeks_ordinal': inflect_engine.ordinal(song.weeks),
+      'chart': chart
+   }
+
+
+templates = [
+  PostTemplate(
+     'Congratulations to %(artist)s coming in on the %(chart)s at number %(rank)s with their hit %(title)s'
+  ),
+  PostTemplate(
+     'Congratulations to %(artist)s debuting on the %(chart)s at %(rank)s with their hit %(title)s',
+     lambda song: song.change == 'New'
+  ),
+  PostTemplate(
+     '%(title)s by %(artist)s debuts on the %(chart)s chart this week',
+     lambda song: song.change == 'New'
+  ),
+  PostTemplate(
+     '%(title)s by %(artist)s has been on the %(chart)s for %(weeks)s',
+     lambda song: song.weeks > 1
+  ),
+  PostTemplate(
+     'For the %(weeks_ordinal)s week in a row, %(title)s by %(artist)s is the number %(rank)s song on the %(chart)s',
+     lambda song: song.weeks > 1
+  )
+]
+
+def make_post_text(song, chart_name):
+  valid_templates = [t for t in templates if t.matches(song)]
+  all_possible = [t.format(song, chart_name) for t in valid_templates] 
+
+  if args.dry_run:
+    for p in all_possible:
+      print '(%s %s) - %s' % (len(p), len(p) < 120, p)
+
+  return random.choice([p for p in all_possible if len(p) < 120])
+
 def post_to_twitter(text, img_bytes):
   t = twitter.Twitter(auth = twitter.OAuth(
      keys.twitter_access_token, keys.twitter_access_token_secret,
@@ -111,23 +178,43 @@ def post_to_twitter(text, img_bytes):
      keys.twitter_consumer_key, keys.twitter_consumer_secret
   ))
 
-  id_img1 = t_up.media.upload(media=img_bytes)["media_id_string"]
+  if img_bytes:
+    id_img1 = t_up.media.upload(media=img_bytes)["media_id_string"]
+  else:
+    id_img1 = None
   response = t.statuses.update(status=text, media_ids=id_img1)
   print 'http://twitter.com/%s/status/%s' % (response['user']['screen_name'], response['id'])
-
 
 def save_to_db(artist, title): 
   post = Post.create(artist = artist, title = title)
   
-def process_song(song):
-  # song.title song.artist
-  post = mutate_song(song.artist, song.title)
+def process_song(song, chart_name):
+  new_parts = mutate_song(song.artist, song.title)
+  if not new_parts:
+    return None
+  
+  (new_artist, new_title) = new_parts
+  new_song = billboard.ChartEntry(
+    title = new_title,
+    artist = new_artist,
+    peakPos = song.peakPos,
+    lastPos = song.lastPos,
+    weeks = song.weeks,
+    rank = song.rank,
+    change = song.change
+  )
+  
   orig = '%s - %s' % (song.artist, song.title)
-  print 'making %s into' % orig
-  print post
-  image_file = make_meme(orig, post, '')
+  post = '%s - %s' % (new_artist, new_title)
+  print '%s -->' % orig
+  print '--> %s' % post
+  if args.no_image:
+    img_bytes = None
+  else:
+    img_bytes = make_meme(orig, post, '')
+  post = make_post_text(new_song, chart_name)
   if not args.dry_run:
-    post_to_twitter(post, image_file)
+    post_to_twitter(post, image_bytes)
     save_to_db(song.artist, song.title)
 
 def filter_chart(chart):
@@ -139,15 +226,15 @@ def filter_chart(chart):
 
   return [ song for song in chart if not in_db(song) ]
 
-def process_chart(chart_name):
-  chart = billboard.ChartData(chart_name)
+def process_chart(chart_id, chart_name):
+  chart = billboard.ChartData(chart_id)
   chart = filter_chart(chart)
-  process_song(random.choice(chart))
+  process_song(random.choice(chart), chart_name)
 
 def main():
   sqlite_db.connect()
   Post.create_table(fail_silently = True)
-  process_chart('hot-100')
+  process_chart('hot-100', 'Hot 100')
 
 if __name__ == "__main__":
   # execute only if run as a script
