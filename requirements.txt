@@ -1,0 +1,6 @@
+beautifulsoup4
+Google-Search-API
+requests
+pronouncing
+sqlite3
+Pillow
