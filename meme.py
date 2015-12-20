@@ -24,14 +24,17 @@ def draw_caption(img, text, top=False, padding=10):
 		s -= 1
 		if s <= 12: break
 
+        draw_x = (img.size[0] - w) / 2
+       
+       
 	#Draw the text multiple times in black to get the outline:
 	for x in xrange(-3, 4):
 		for y in xrange(-3, 4):
 			draw_y = y + padding if top else img.size[1] - h + y - padding
-			draw.text((10 + x, draw_y), text, font=font, fill='black')
+			draw.text((draw_x + x, draw_y), text, font=font, fill='black')
 	#Draw the text once more in white:
 	draw_y = 0 + padding if top else img.size[1] - h - padding
-	draw.text((10, draw_y), text, font=font, fill='white')
+	draw.text((draw_x, draw_y), text, font=font, fill='white')
 
 import sys
 def main():
